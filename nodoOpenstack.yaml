@@ -1,0 +1,67 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - apt-transport-https
+  - gnupg
+  - snapd
+
+write_files:
+  - path: /usr/local/bin/install-microstack.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      LOG=/var/log/microstack-install.log
+      exec > >(tee -a $LOG) 2>&1
+
+      echo "1 Inizio installazione MicroStack"
+      echo "Data: $(date)"
+
+      echo "2 Avvio snapd"
+      systemctl enable --now snapd
+      sleep 10
+      echo "snapd status: $(systemctl is-active snapd)"
+
+      echo "3 Installazione MicroStack snap"
+      snap install microstack --beta
+
+      echo "4 Inizializzazione MicroStack"
+      microstack init --auto --control
+      echo "microstack init exit code: $?"
+
+      # echo "5 Lancio VM cirros di test"
+      # mkdir -p /home/root/snap/microstack/common/.ssh
+      # chmod 700 /home/root/snap/microstack/common/.ssh
+      # microstack launch cirros --name test
+      # echo "launch exit code: $?"
+
+      echo "6 Export credenziali MicroStack"
+      source /var/snap/microstack/common/etc/microstack.rc
+
+      CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' /var/snap/microstack/common/etc/ssl/certs/cacert.pem)
+
+      cat > /tmp/microstack-credentials.json << EOF
+      {
+        "auth_url": "${OS_AUTH_URL}",
+        "username": "${OS_USERNAME}",
+        "password": "${OS_PASSWORD}",
+        "project_name": "${OS_PROJECT_NAME}",
+        "user_domain_name": "${OS_USER_DOMAIN_NAME}",
+        "project_domain_name": "${OS_PROJECT_DOMAIN_NAME}",
+        "region": "microstack",
+        "cacert": "${CERT}"
+      }
+
+      chmod 600 /tmp/microstack-credentials.json
+      echo "Credenziali salvate in /tmp/microstack-credentials.json"
+
+
+runcmd:
+  - [ bash, -c, "/usr/local/bin/install-microstack.sh" ]
+
+final_message: "Installazione completata"
