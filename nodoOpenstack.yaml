@@ -56,7 +56,8 @@ write_files:
         "region": "microstack",
         "cacert": "${CERT}"
       }
-
+      EOF
+      
       chmod 600 /tmp/microstack-credentials.json
       echo "Credenziali salvate in /tmp/microstack-credentials.json"
 
