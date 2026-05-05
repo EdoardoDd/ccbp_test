@@ -53,7 +53,7 @@ write_files:
         "tenant_name": "${OS_PROJECT_NAME}",
         "domain_name": "${OS_USER_DOMAIN_NAME}",
         "region": "microstack",
-        "cacert": "${CERT}"
+        "insecure": true
       }
       EOF
       
