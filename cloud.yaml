@@ -1,0 +1,55 @@
+#cloud-config
+package_update: true
+packages:
+  - curl
+  - jq
+  - git
+  - python3
+  - python3-pip
+  - python3-venv
+
+runcmd:
+  # 1) K3s server, Traefik non disabilitato (resta l'Ingress/Routing Service).
+  #    Il node-label di sito usa l'hostname della VM: verificate al primo
+  #    boot con `hostname` che corrisponda a "cloud-node" (dipende dal
+  #    datasource cloud-init di SLICES); se non combacia, rilanciate questo
+  #    comando a mano con il valore corretto o editate il node-label dopo.
+  - |
+    SITE_ID="$(hostname)"
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+      --node-label prism.io/role=central-cloud \
+      --node-label prism.io/site=${SITE_ID} \
+      --write-kubeconfig-mode 644" sh -
+ 
+  - |
+    until k3s kubectl get nodes | grep -q ' Ready '; do
+      sleep 5
+    done
+ 
+  # 2) Gateway API CRDs (prerequisito di Knative)
+  - k3s kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+ 
+  # 3) Knative Serving — CRDs + Core (il Cloud "can also execute its
+  #    workflow internally, and it also expose its triggers" — §VI)
+  - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-crds.yaml
+  - |
+    until k3s kubectl get crd services.serving.knative.dev >/dev/null 2>&1; do
+      sleep 3
+    done
+  - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-core.yaml
+ 
+  # 4) net-kourier come networking layer di Knative (Traefik resta l'ingress
+  #    generale del cluster — vedi nota precedente sul perché non uso
+  #    Traefik come Gateway API provider per Knative)
+  - k3s kubectl apply -f https://github.com/knative/net-kourier/releases/latest/download/kourier.yaml
+  - >
+    k3s kubectl patch configmap/config-network -n knative-serving --type merge
+    -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+ 
+  # 5) Magic DNS via sslip.io sull'IP rilevato a runtime
+  - |
+    NODE_IP=$(hostname -I | awk '{print $1}')
+    k3s kubectl patch configmap/config-domain -n knative-serving --type merge \
+      -p "{\"data\":{\"${NODE_IP}.sslip.io\":\"\"}}"
+ 
+  - touch /var/lib/prism-bootstrap-complete
