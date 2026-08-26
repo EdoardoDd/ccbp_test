@@ -1,67 +1,101 @@
 #cloud-config
+# ==============================================================================
+# cloud-init-edge.yaml — nodi "edge-node-1".."edge-node-9" (Edge Site, PRISM)
+# ------------------------------------------------------------------------------
+# STESSO file statico per tutti e 9: nessun placeholder viene sostituito
+# (cloudInitEnvs non valorizzato). L'identità del sito è auto-rilevata via
+# `hostname` — verificate al primo boot che coincida col friendlyName della
+# BiVM (dipende dal datasource cloud-init usato da SLICES-RI).
+#
+# Ogni Edge Site, come da Fig. 2 del paper, ospita in un unico nodo:
+# Kubernetes API (K3s single-node), Knative (Activator + fn), Prometheus,
+# Traefik (ingress + routing pesato), e in seguito il Workflow Master
+# Controller applicativo di PRISM.
+# ==============================================================================
+
 package_update: true
-packages:
-  - curl
-  - apt-transport-https
-  - ca-certificates
-  - software-properties-common
-  - jq
+package_upgrade: false
 
 write_files:
-  - path: /opt/bootstrap-cluster.sh
-    permissions: '0755'
+  # kube-prometheus-stack locale al sito ("Observability Service" — §III).
+  # Grafana disattivato: la Dashboard è centralizzata sul Central Cloud.
+  - path: /var/lib/rancher/k3s/server/manifests/prism-observability.yaml
+    owner: root:root
+    permissions: '0644'
     content: |
-      #!/bin/bash
-      set -e
-      
-      # 1. Installa K3s (Traefik viene installato automaticamente)
-      curl -sfL https://get.k3s.io | sh -
-
-      # Esporta il kubeconfig per i comandi successivi
-      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-      echo "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> /root/.bashrc
-
-      # Attendi che il demone K3s e il nodo siano pronti
-      echo "Attesa che il nodo K3s diventi Ready..."
-      sleep 15
-      until kubectl get nodes | grep -q "Ready"; do 
-        sleep 5; 
-      done
-
-      # 2. Installa Helm
-      curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-      bash get_helm.sh
-
-      # 3. Installa lo stack kube-prometheus (Prometheus + Grafana + Alertmanager)
-      helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-      helm repo update
-      helm install prometheus prometheus-community/kube-prometheus-stack \
-        --namespace monitoring \
-        --create-namespace \
-        --set grafana.enabled=true \
-        --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
-
-      # 4. Installa Knative Serving (Core e CRDs)
-      KNATIVE_VERSION="knative-v1.13.0"
-      
-      kubectl apply -f https://github.com/knative/serving/releases/download/${KNATIVE_VERSION}/serving-crds.yaml
-      kubectl apply -f https://github.com/knative/serving/releases/download/${KNATIVE_VERSION}/serving-core.yaml
-
-      # Attendi che i pod core di Knative siano creati prima di procedere
-      sleep 10
-
-      # 5. Installa Kourier (Ingress controller raccomandato per Knative)
-      kubectl apply -f https://github.com/knative/net-kourier/releases/download/${KNATIVE_VERSION}/kourier.yaml
-
-      # Configura Knative per usare Kourier come rete predefinita
-      kubectl patch configmap/config-network \
-        --namespace knative-serving \
-        --type merge \
-        --patch '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
-
-      # (Opzionale) Configura il DNS magico di Knative (es. sslip.io) per test immediati
-      kubectl apply -f https://github.com/knative/serving/releases/download/${KNATIVE_VERSION}/serving-default-domain.yaml
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: monitoring
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: kube-prometheus-stack
+        namespace: kube-system
+      spec:
+        chart: kube-prometheus-stack
+        repo: https://prometheus-community.github.io/helm-charts
+        targetNamespace: monitoring
+        createNamespace: true
+        valuesContent: |-
+          fullnameOverride: prism-observability
+          prometheus:
+            prometheusSpec:
+              retention: 6h
+              resources:
+                requests: {cpu: 150m, memory: 384Mi}
+                limits: {memory: 768Mi}
+              # Se volete federare verso il Prometheus del Central Cloud,
+              # aggiungete qui un remoteWrite dopo il provisioning (l'IP del
+              # cloud-node non è noto a boot-time — vedi scripts/wire-peers.sh):
+              # remoteWrite:
+              #   - url: "http://<CLOUD_NODE_IP>:30900/api/v1/write"
+          kubeControllerManager: {enabled: false}
+          kubeScheduler: {enabled: false}
+          kubeEtcd: {enabled: false}
+          kubeProxy: {enabled: false}
+          grafana:
+            enabled: false
+          alertmanager:
+            enabled: false
 
 runcmd:
-  # Eseguiamo lo script generato e salviamo i log per poter fare debugging
-  - /opt/bootstrap-cluster.sh > /var/log/k8s-bootstrap.log 2>&1
+  # 1) K3s server, Traefik non disabilitato. `hostname` funge da site-id
+  #    (es. "edge-node-3") — verificate al boot che coincida col friendlyName.
+  - |
+    SITE_ID="$(hostname)"
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+      --node-label prism.io/role=edge \
+      --node-label prism.io/site=${SITE_ID} \
+      --write-kubeconfig-mode 644" sh -
+
+  - |
+    until k3s kubectl get nodes | grep -q ' Ready '; do
+      sleep 5
+    done
+
+  # 2) Gateway API CRDs
+  - k3s kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
+  # 3) Knative Serving — CRDs + Core
+  - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-crds.yaml
+  - |
+    until k3s kubectl get crd services.serving.knative.dev >/dev/null 2>&1; do
+      sleep 3
+    done
+  - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-core.yaml
+
+  # 4) net-kourier come networking layer di Knative
+  - k3s kubectl apply -f https://github.com/knative/net-kourier/releases/latest/download/kourier.yaml
+  - >
+    k3s kubectl patch configmap/config-network -n knative-serving --type merge
+    -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+
+  # 5) Magic DNS via sslip.io sull'IP rilevato a runtime
+  - |
+    NODE_IP=$(hostname -I | awk '{print $1}')
+    k3s kubectl patch configmap/config-domain -n knative-serving --type merge \
+      -p "{\"data\":{\"${NODE_IP}.sslip.io\":\"\"}}"
+
+  - touch /var/lib/prism-bootstrap-complete\
