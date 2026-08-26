@@ -1,12 +1,58 @@
 #cloud-config
+# ==============================================================================
+# cloud-init-cloud.yaml — nodo "cloud-node" (Central Cloud, PRISM)
+# ------------------------------------------------------------------------------
+# Applicato via BiVM + cloudInitType: webReference: NESSUN placeholder viene
+# sostituito da createBiVM.sh (cloudInitEnvs non è valorizzato nel vostro
+# manifest) — questo file è statico, uguale a se stesso a ogni boot.
+# Se in futuro volete differenziare via envsubst, aggiungete cloudInitEnvs
+# alla BiVM e referenziate ${VAR} qui dentro.
+# ==============================================================================
+
 package_update: true
-packages:
-  - curl
-  - jq
-  - git
-  - python3
-  - python3-pip
-  - python3-venv
+package_upgrade: false
+
+write_files:
+  # kube-prometheus-stack — "Observability Collector and Dashboard" del
+  # Central Cloud (§VI del paper): qui teniamo Grafana attivo, a differenza
+  # degli edge dove lo disabilitiamo per risparmiare risorse.
+  - path: /var/lib/rancher/k3s/server/manifests/prism-observability.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: monitoring
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: kube-prometheus-stack
+        namespace: kube-system
+      spec:
+        chart: kube-prometheus-stack
+        repo: https://prometheus-community.github.io/helm-charts
+        targetNamespace: monitoring
+        createNamespace: true
+        valuesContent: |-
+          fullnameOverride: prism-observability
+          prometheus:
+            prometheusSpec:
+              retention: 24h
+              resources:
+                requests: {cpu: 300m, memory: 768Mi}
+                limits: {memory: 1.5Gi}
+          kubeControllerManager: {enabled: false}
+          kubeScheduler: {enabled: false}
+          kubeEtcd: {enabled: false}
+          kubeProxy: {enabled: false}
+          grafana:
+            enabled: true
+            defaultDashboardsEnabled: true
+            persistence: {enabled: false}
+          alertmanager:
+            enabled: true
 
 runcmd:
   # 1) K3s server, Traefik non disabilitato (resta l'Ingress/Routing Service).
@@ -20,36 +66,48 @@ runcmd:
       --node-label prism.io/role=central-cloud \
       --node-label prism.io/site=${SITE_ID} \
       --write-kubeconfig-mode 644" sh -
- 
+
   - |
     until k3s kubectl get nodes | grep -q ' Ready '; do
       sleep 5
     done
- 
-  # 2) Gateway API CRDs (prerequisito di Knative)
-  - k3s kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
- 
-  # 3) Knative Serving — CRDs + Core (il Cloud "can also execute its
-  #    workflow internally, and it also expose its triggers" — §VI)
+
+  # 2) Knative Serving — CRDs + Core (il Cloud "can also execute its
+  #    workflow internally, and it also expose its triggers" — §VI).
+  #    NIENTE Gateway API CRD qui: non servono al networking layer scelto
+  #    (Kourier, vedi step 3) e in più andrebbero in conflitto con le
+  #    stesse CRD che il chart traefik-crd di K3s installa come parte del
+  #    proprio bundle (root cause del CrashLoopBackOff osservato su
+  #    edge-node-1: Helm rifiutava di importare CRD già create da un
+  #    `kubectl apply` non-Helm).
   - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-crds.yaml
   - |
     until k3s kubectl get crd services.serving.knative.dev >/dev/null 2>&1; do
       sleep 3
     done
   - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-core.yaml
- 
-  # 4) net-kourier come networking layer di Knative (Traefik resta l'ingress
+
+  # 3) net-kourier come networking layer di Knative (Traefik resta l'ingress
   #    generale del cluster — vedi nota precedente sul perché non uso
   #    Traefik come Gateway API provider per Knative)
   - k3s kubectl apply -f https://github.com/knative/net-kourier/releases/latest/download/kourier.yaml
   - >
     k3s kubectl patch configmap/config-network -n knative-serving --type merge
     -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
- 
-  # 5) Magic DNS via sslip.io sull'IP rilevato a runtime
+
+  # 3b) Kourier e Traefik sono entrambi Service LoadBalancer di default —
+  #     stesso conflitto di porte 80/443 osservato su edge-node-1. Traefik
+  #     resta l'unico front-door esterno; Kourier diventa interno.
+  - |
+    until k3s kubectl get svc kourier -n kourier-system >/dev/null 2>&1; do
+      sleep 3
+    done
+    k3s kubectl patch svc kourier -n kourier-system -p '{"spec":{"type":"ClusterIP"}}'
+
+  # 4) Magic DNS via sslip.io sull'IP rilevato a runtime
   - |
     NODE_IP=$(hostname -I | awk '{print $1}')
     k3s kubectl patch configmap/config-domain -n knative-serving --type merge \
       -p "{\"data\":{\"${NODE_IP}.sslip.io\":\"\"}}"
- 
+
   - touch /var/lib/prism-bootstrap-complete
