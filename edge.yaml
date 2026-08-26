@@ -42,60 +42,68 @@ write_files:
           fullnameOverride: prism-observability
           prometheus:
             prometheusSpec:
-              retention: 6h
+              retention: 24h
               resources:
-                requests: {cpu: 150m, memory: 384Mi}
-                limits: {memory: 768Mi}
-              # Se volete federare verso il Prometheus del Central Cloud,
-              # aggiungete qui un remoteWrite dopo il provisioning (l'IP del
-              # cloud-node non è noto a boot-time — vedi scripts/wire-peers.sh):
-              # remoteWrite:
-              #   - url: "http://<CLOUD_NODE_IP>:30900/api/v1/write"
+                requests: {cpu: 300m, memory: 768Mi}
+                limits: {memory: 1.5Gi}
           kubeControllerManager: {enabled: false}
           kubeScheduler: {enabled: false}
           kubeEtcd: {enabled: false}
           kubeProxy: {enabled: false}
           grafana:
-            enabled: false
+            enabled: true
+            defaultDashboardsEnabled: true
+            persistence: {enabled: false}
           alertmanager:
-            enabled: false
+            enabled: true
+
 
 runcmd:
-  # 1) K3s server, Traefik non disabilitato. `hostname` funge da site-id
-  #    (es. "edge-node-3") — verificate al boot che coincida col friendlyName.
+  # 1) K3s server, Traefik non disabilitato (resta l'Ingress/Routing Service).
+  #    Il node-label di sito usa l'hostname della VM: verificate al primo
+  #    boot con `hostname` che corrisponda a "cloud-node" (dipende dal
+  #    datasource cloud-init di SLICES); se non combacia, rilanciate questo
+  #    comando a mano con il valore corretto o editate il node-label dopo.
   - |
     SITE_ID="$(hostname)"
     curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
-      --node-label prism.io/role=edge \
+      --node-label prism.io/role=central-cloud \
       --node-label prism.io/site=${SITE_ID} \
       --write-kubeconfig-mode 644" sh -
-
+ 
   - |
     until k3s kubectl get nodes | grep -q ' Ready '; do
       sleep 5
     done
-
-  # 2) Gateway API CRDs
-  - k3s kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
-
-  # 3) Knative Serving — CRDs + Core
+ 
+  # 2) Knative Serving — CRDs + Core (il Cloud "can also execute its
+  #    workflow internally, and it also expose its triggers" — §VI).
+  #    NIENTE Gateway API CRD qui: non servono al networking layer scelto
+  #    (Kourier, vedi step 3) e in più andrebbero in conflitto con le
+  #    stesse CRD che il chart traefik-crd di K3s installa come parte del
+  #    proprio bundle (root cause del CrashLoopBackOff osservato su
+  #    edge-node-1: Helm rifiutava di importare CRD già create da un
+  #    `kubectl apply` non-Helm).
   - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-crds.yaml
   - |
     until k3s kubectl get crd services.serving.knative.dev >/dev/null 2>&1; do
       sleep 3
     done
   - k3s kubectl apply -f https://github.com/knative/serving/releases/latest/download/serving-core.yaml
-
-  # 4) net-kourier come networking layer di Knative
+ 
+  # 3) net-kourier come networking layer di Knative (Traefik resta l'ingress
+  #    generale del cluster — vedi nota precedente sul perché non uso
+  #    Traefik come Gateway API provider per Knative)
   - k3s kubectl apply -f https://github.com/knative/net-kourier/releases/latest/download/kourier.yaml
   - >
     k3s kubectl patch configmap/config-network -n knative-serving --type merge
     -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
-
-  # 5) Magic DNS via sslip.io sull'IP rilevato a runtime
+ 
+  # 4) Magic DNS via sslip.io sull'IP rilevato a runtime
   - |
     NODE_IP=$(hostname -I | awk '{print $1}')
     k3s kubectl patch configmap/config-domain -n knative-serving --type merge \
       -p "{\"data\":{\"${NODE_IP}.sslip.io\":\"\"}}"
-
-  - touch /var/lib/prism-bootstrap-complete\
+ 
+  - touch /var/lib/prism-bootstrap-complete
+ 
