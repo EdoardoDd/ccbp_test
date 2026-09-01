@@ -35,11 +35,15 @@ write_files:
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n monitoring --set grafana.adminPassword=prism-admin
 
-      # 5. Traefik (per il routing pesato PRISM tra funzioni edge/cloud)
+      # 5. Traefik (Ingress/Routing Service)
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
-      helm upgrade --install traefik-prism traefik/traefik -n prism-system
+      cat <<'VALUES' > /tmp/traefik-prism-values.yaml
+      additionalArguments:
+        - "--providers.kubernetescrd.allowCrossNamespace=true"
+      VALUES
+      helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
 runcmd:
   - /usr/local/bin/prism-bootstrap-cloud.sh
