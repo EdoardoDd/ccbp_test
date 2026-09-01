@@ -15,7 +15,7 @@ write_files:
 
       # 1. k3s come control plane INDIPENDENTE (cluster separato dal cloud)
       curl -sfL https://get.k3s.io | \
-        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=edge --node-label prism/site=edge-01" \
+        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=edge --node-label prism/site=${PRISM_SITE}" \
         sh -s -
 
       # 2. Helm
@@ -38,13 +38,17 @@ write_files:
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n monitoring --set grafana.adminPassword=prism-admin
 
-      # 5. Traefik (Ingress/Routing Service di QUESTO sito edge)
+      # 5. Traefik (Ingress/Routing Service)
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
-      helm upgrade --install traefik-prism traefik/traefik -n prism-system
+      cat <<'VALUES' > /tmp/traefik-prism-values.yaml
+      additionalArguments:
+        - "--providers.kubernetescrd.allowCrossNamespace=true"
+      VALUES
+      helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
 runcmd:
   - /usr/local/bin/prism-bootstrap-edge.sh
 
-final_message: "Nodo edge-01 (cluster indipendente) pronto dopo $UPTIME secondi."
+final_message: "Nodo ${PRISM_SITE} pronto dopo $UPTIME secondi."
