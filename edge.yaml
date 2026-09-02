@@ -45,6 +45,11 @@ write_files:
       cat <<'VALUES' > /tmp/traefik-prism-values.yaml
       additionalArguments:
         - "--providers.kubernetescrd.allowCrossNamespace=true"
+      ports:
+       web:
+         nodePort: 30080
+       websecure:
+         nodePort: 30443
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
