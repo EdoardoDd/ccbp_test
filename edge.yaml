@@ -54,69 +54,69 @@ write_files:
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
 
-      # 6. Workflow Master (PRISM) - pre-provisionato, inattivo finche' non
-      #    diventa master per un workflow (via PrismMasterAssignment)
-      git clone --depth 1 <REPO_URL> /tmp/workflow-master
-      cd /tmp/workflow-master
+      # 6. Self-provisioning della credenziale di scrittura remota, per
+      #    quando un master su un altro sito dovra' scrivere Traefik qui
+      kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
  
-      docker build -t workflow-master:local .
-      docker save workflow-master:local | k3s ctr images import -
- 
-      kubectl apply -f 00-rbac.yaml
-      kubectl apply -f ../prism-crds/00-prismroutingpolicy-crd.yaml
-      kubectl apply -f ../prism-crds/02-prismmasterassignment-crd.yaml
- 
-      cat <<'DEPLOY' | kubectl apply -f -
-      apiVersion: apps/v1
-      kind: Deployment
+      cat <<'RBAC' | kubectl apply -f -
+      apiVersion: v1
+      kind: ServiceAccount
       metadata:
-        name: workflow-master
+        name: workflow-master-remote-writer
         namespace: prism-system
-      spec:
-        replicas: 1
-        selector:
-          matchLabels:
-            app: workflow-master
-        template:
-          metadata:
-            labels:
-              app: workflow-master
-          spec:
-            serviceAccountName: workflow-master
-            containers:
-              - name: workflow-master
-                image: workflow-master:local
-                imagePullPolicy: IfNotPresent
-                env:
-                  - name: PRISM_SITE
-                    value: "${PRISM_SITE}"
-                  - name: PRISM_NAMESPACE
-                    value: "prism-system"
-                  - name: PRISM_FUNCTION_NAMESPACE
-                    value: "default"
-                  - name: PRISM_TRAEFIK_PORT
-                    value: "30080"
-                  - name: PRISM_SFCC_KUBECONFIG_PATH
-                    value: "/etc/prism/sfcc-kubeconfig/kubeconfig"
-                  - name: PRISM_REMOTE_KUBECONFIG_DIR
-                    value: "/etc/prism/remote-kubeconfigs"
-                volumeMounts:
-                  - name: sfcc-kubeconfig
-                    mountPath: /etc/prism/sfcc-kubeconfig
-                    readOnly: true
-                  - name: remote-kubeconfigs
-                    mountPath: /etc/prism/remote-kubeconfigs
-                    readOnly: true
-            volumes:
-              - name: sfcc-kubeconfig
-                secret:
-                  secretName: sfcc-kubeconfig-bivm-reader
-                  optional: true
-              - name: remote-kubeconfigs
-                secret:
-                  secretName: remote-kubeconfigs
-                  optional: true
-      DEPLOY      
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: workflow-master-remote-writer
+        namespace: prism-system
+      rules:
+        - apiGroups: ["traefik.io"]
+          resources: ["ingressroutes", "traefikservices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: workflow-master-remote-writer
+        namespace: prism-system
+      subjects:
+        - kind: ServiceAccount
+          name: workflow-master-remote-writer
+          namespace: prism-system
+      roleRef:
+        kind: Role
+        name: workflow-master-remote-writer
+        apiGroup: rbac.authorization.k8s.io
+      RBAC
+ 
+      SELF_IP=$(hostname -I | awk '{print $1}')
+      SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+      SERVER="${SERVER/127.0.0.1/${SELF_IP}}"
+      CA_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+      TOKEN=$(kubectl -n prism-system create token workflow-master-remote-writer --duration=87600h)
+ 
+      mkdir -p /etc/prism
+      cat <<KUBECONFIG > /etc/prism/self-remote-writer-kubeconfig.yaml
+      apiVersion: v1
+      kind: Config
+      current-context: self-remote-writer
+      clusters:
+        - name: self
+          cluster:
+            server: ${SERVER}
+            certificate-authority-data: ${CA_DATA}
+      contexts:
+        - name: self-remote-writer
+          context:
+            cluster: self
+            user: workflow-master-remote-writer
+      users:
+        - name: workflow-master-remote-writer
+          user:
+            token: ${TOKEN}
+      KUBECONFIG
+      chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml      
 
 runcmd:
   - /usr/local/bin/prism-bootstrap-edge.sh
