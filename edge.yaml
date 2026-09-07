@@ -53,6 +53,71 @@ write_files:
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
+
+      # 6. Workflow Master (PRISM) - pre-provisionato, inattivo finche' non
+      #    diventa master per un workflow (via PrismMasterAssignment)
+      git clone --depth 1 <REPO_URL> /tmp/workflow-master
+      cd /tmp/workflow-master
+ 
+      docker build -t workflow-master:local .
+      docker save workflow-master:local | k3s ctr images import -
+ 
+      kubectl apply -f 00-rbac.yaml
+      kubectl apply -f ../prism-crds/00-prismroutingpolicy-crd.yaml
+      kubectl apply -f ../prism-crds/02-prismmasterassignment-crd.yaml
+ 
+      cat <<'DEPLOY' | kubectl apply -f -
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: workflow-master
+        namespace: prism-system
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: workflow-master
+        template:
+          metadata:
+            labels:
+              app: workflow-master
+          spec:
+            serviceAccountName: workflow-master
+            containers:
+              - name: workflow-master
+                image: workflow-master:local
+                imagePullPolicy: IfNotPresent
+                env:
+                  - name: PRISM_SITE
+                    value: "${PRISM_SITE}"
+                  - name: PRISM_NAMESPACE
+                    value: "prism-system"
+                  - name: PRISM_FUNCTION_NAMESPACE
+                    value: "default"
+                  - name: PRISM_TRAEFIK_PORT
+                    value: "30080"
+                  - name: PRISM_SFCC_KUBECONFIG_PATH
+                    value: "/etc/prism/sfcc-kubeconfig/kubeconfig"
+                  - name: PRISM_REMOTE_KUBECONFIG_DIR
+                    value: "/etc/prism/remote-kubeconfigs"
+                volumeMounts:
+                  - name: sfcc-kubeconfig
+                    mountPath: /etc/prism/sfcc-kubeconfig
+                    readOnly: true
+                  - name: remote-kubeconfigs
+                    mountPath: /etc/prism/remote-kubeconfigs
+                    readOnly: true
+            volumes:
+              - name: sfcc-kubeconfig
+                secret:
+                  secretName: sfcc-kubeconfig-bivm-reader
+                  optional: true
+              - name: remote-kubeconfigs
+                secret:
+                  secretName: remote-kubeconfigs
+                  optional: true
+      DEPLOY      
+
 runcmd:
   - /usr/local/bin/prism-bootstrap-edge.sh
 
