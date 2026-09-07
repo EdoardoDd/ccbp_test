@@ -54,7 +54,7 @@ write_files:
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
 
-      # 6. Self-provisioning della credenziale di scrittura remota, per
+            # 6. Self-provisioning della credenziale di scrittura remota, per
       #    quando un master su un altro sito dovra' scrivere Traefik qui
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
  
@@ -73,6 +73,12 @@ write_files:
       rules:
         - apiGroups: ["traefik.io"]
           resources: ["ingressroutes", "traefikservices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: [""]
+          resources: ["services"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: ["discovery.k8s.io"]
+          resources: ["endpointslices"]
           verbs: ["get", "list", "watch", "create", "update", "patch"]
       ---
       apiVersion: rbac.authorization.k8s.io/v1
@@ -116,7 +122,7 @@ write_files:
           user:
             token: ${TOKEN}
       KUBECONFIG
-      chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml      
+      chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml
 
 runcmd:
   - /usr/local/bin/prism-bootstrap-edge.sh
