@@ -4,6 +4,8 @@ packages:
   - curl
   - jq
   - apt-transport-https
+  - gettext-base
+  - subversion
 
 write_files:
   - path: /usr/local/bin/prism-bootstrap-edge.sh
@@ -38,26 +40,33 @@ write_files:
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n monitoring --set grafana.adminPassword=prism-admin
 
-      # 5. Traefik (Ingress/Routing Service)
+      # 5. Traefik (Ingress/Routing Service): client-facing + interno
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
+ 
       cat <<'VALUES' > /tmp/traefik-prism-values.yaml
       additionalArguments:
         - "--providers.kubernetescrd.allowCrossNamespace=true"
       ports:
-       web:
-         nodePort: 30080
-       websecure:
-         nodePort: 30443
+        web:
+          nodePort: 30080
+        websecure:
+          nodePort: 30443
+        internal:
+          port: 8090
+          expose:
+            default: true
+          exposedPort: 8090
+          nodePort: 30090
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
-
-
-            # 6. Self-provisioning della credenziale di scrittura remota, per
-      #    quando un master su un altro sito dovra' scrivere Traefik qui
-      kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
  
+      # 6. Self-provisioning della credenziale di scrittura remota - il
+      #    nodo genera per SE STESSO l'accesso che un master altrove
+      #    usera' per scrivere qui, usando l'accesso admin che ha gia'
+      #    su se stesso in questo momento del boot. Nessun kubeconfig
+      #    admin lascia mai il nodo.
       cat <<'RBAC' | kubectl apply -f -
       apiVersion: v1
       kind: ServiceAccount
@@ -80,6 +89,9 @@ write_files:
         - apiGroups: ["discovery.k8s.io"]
           resources: ["endpointslices"]
           verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: ["serving.knative.dev"]
+          resources: ["services"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       ---
       apiVersion: rbac.authorization.k8s.io/v1
       kind: RoleBinding
@@ -123,8 +135,27 @@ write_files:
             token: ${TOKEN}
       KUBECONFIG
       chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml
-
-runcmd:
-  - /usr/local/bin/prism-bootstrap-edge.sh
-
-final_message: "Nodo ${PRISM_SITE} pronto dopo $UPTIME secondi."
+ 
+      # 7. Workflow Master (PRISM) - pre-provisionato da un'immagine gia'
+      #    pubblicata (nessun build al boot), pronto ma INATTIVO finche'
+      #    non arriva una PrismMasterAssignment che nomina questo sito.
+      #    L'immagine non contiene segreti (il kubeconfig verso sfcc e'
+      #    montato a runtime da un Secret) - puo' stare anche su un
+      #    registry pubblico senza problemi.
+      git clone --depth 1 https://github.com/EdoardoDd/workflow_master_test /workflow-master
+      # svn export https://github.com/EdoardoDd/prism_serverless/trunk/workflow-master /workflow-master
+      cd /workflow-master
+ 
+      kubectl apply -f rbac.yaml
+      kubectl apply -f crds/prismroutingpolicy-crd.yaml
+      kubectl apply -f crds/prismmasterassignment-crd.yaml
+ 
+      # PRISM_SITE e' gia' stato sostituito da envsubst nel testo di
+      # QUESTO script (e' cosi' che arriva anche al node-label piu' sopra),
+      # ma il file manual-deploy/02-deployment.yaml e' stato scaricato ORA
+      # dal repo - non e' mai passato dall'envsubst dell'operator. Lo
+      # esportiamo come variabile di shell vera, e usiamo envsubst A
+      # RUNTIME sul file, cosi' resta un'UNICA fonte di verita' per il
+      # Deployment (nessuna copia duplicata qui dentro).
+      export PRISM_SITE="${PRISM_SITE}"
+      envsubst < deployment.yaml | kubectl apply -f -
