@@ -4,6 +4,8 @@ packages:
   - curl
   - jq
   - apt-transport-https
+  - gettext-base
+  - subversion
 
 write_files:
   - path: /usr/local/bin/prism-bootstrap-cloud.sh
@@ -13,44 +15,158 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # 1. k3s (control plane), traefik interno disabilitato: ne useremo uno dedicato
-      curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --node-label node-role=cloud" sh -s -
+      # 1. k3s come control plane INDIPENDENTE. Il paper (Sez. II/III)
+      #    tratta il Cloud come un sito di esecuzione vero e proprio ("The
+      #    Cloud can also execute its workflow internally, and it also
+      #    expose its triggers"), non solo control-plane: stesso stack di
+      #    serving degli edge-node, stesso trattamento, nessun caso
+      #    speciale (coerente col resto del design: function-installer
+      #    considera gia' ogni sito "remoto" allo stesso modo).
+      curl -sfL https://get.k3s.io | \
+        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=cloud" \
+        sh -s -
 
       # 2. Helm
       curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-      # 3. Knative Serving + Kourier (networking layer)
+      # 3. Knative Serving + Kourier - stesse versioni di edge.yaml
       kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.15.0/serving-crds.yaml
       kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.15.0/serving-core.yaml
       kubectl apply -f https://github.com/knative/net-kourier/releases/download/knative-v1.15.0/kourier.yaml
       kubectl patch configmap/config-network -n knative-serving --type merge \
         -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
 
-      # 4. Prometheus (kube-prometheus-stack, include Grafana e node-exporter)
+      # 4. Prometheus
       helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
       helm repo update
       kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n monitoring --set grafana.adminPassword=prism-admin
 
-      # 5. Traefik (Ingress/Routing Service)
+      # 5. Traefik (Ingress/Routing Service): client-facing + interno.
+      #    IDENTICO a edge.yaml, stessi due entryPoint dedicati (30080
+      #    client-facing, 30090 mesh interno) - cloud-node deve poter
+      #    ricevere sia traffico diretto sia puntatori mesh da altri siti,
+      #    esattamente come un edge-node.
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
+
       cat <<'VALUES' > /tmp/traefik-prism-values.yaml
       additionalArguments:
         - "--providers.kubernetescrd.allowCrossNamespace=true"
       ports:
-       web:
-         nodePort: 30080
-       websecure:
-         nodePort: 30443
+        web:
+          nodePort: 30080
+        websecure:
+          nodePort: 30443
+        internal:
+          port: 8090
+          expose:
+            default: true
+          exposedPort: 8090
+          nodePort: 30090
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
-runcmd:
-  - /usr/local/bin/prism-bootstrap-cloud.sh
+      # 6. Self-provisioning della credenziale di scrittura remota - lo
+      #    STESSO meccanismo degli edge-node (vedi edge.yaml, punto 6):
+      #    cloud-node genera per SE STESSO l'accesso che un master altrove
+      #    (workflow-master su un edge, o function-installer qui stesso)
+      #    usera' per scrivere qui. Nessun kubeconfig admin lascia mai il
+      #    nodo. Necessario perche' cloud-node e' ora un sito installabile
+      #    a tutti gli effetti (spec.sites / destinations puo' nominarlo).
+      cat <<'RBAC' | kubectl apply -f -
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: workflow-master-remote-writer
+        namespace: prism-system
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: workflow-master-remote-writer
+        namespace: prism-system
+      rules:
+        - apiGroups: ["traefik.io"]
+          resources: ["ingressroutes", "traefikservices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: [""]
+          resources: ["services"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: ["discovery.k8s.io"]
+          resources: ["endpointslices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch"]
+        - apiGroups: ["serving.knative.dev"]
+          resources: ["services"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: workflow-master-remote-writer
+        namespace: prism-system
+      subjects:
+        - kind: ServiceAccount
+          name: workflow-master-remote-writer
+          namespace: prism-system
+      roleRef:
+        kind: Role
+        name: workflow-master-remote-writer
+        apiGroup: rbac.authorization.k8s.io
+      RBAC
 
-final_message: "Nodo cloud PRISM pronto dopo $UPTIME secondi."
+      SELF_IP=$(hostname -I | awk '{print $1}')
+      SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+      SERVER="${SERVER/127.0.0.1/${SELF_IP}}"
+      CA_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+      TOKEN=$(kubectl -n prism-system create token workflow-master-remote-writer --duration=87600h)
+
+      mkdir -p /etc/prism
+      cat <<KUBECONFIG > /etc/prism/self-remote-writer-kubeconfig.yaml
+      apiVersion: v1
+      kind: Config
+      current-context: self-remote-writer
+      clusters:
+        - name: self
+          cluster:
+            server: ${SERVER}
+            certificate-authority-data: ${CA_DATA}
+      contexts:
+        - name: self-remote-writer
+          context:
+            cluster: self
+            user: workflow-master-remote-writer
+      users:
+        - name: workflow-master-remote-writer
+          user:
+            token: ${TOKEN}
+      KUBECONFIG
+      chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml
+
+      # 7. function-installer - pre-provisionato da un'immagine gia'
+      #    pubblicata (nessun build al boot), GIA' ATTIVO al primo avvio
+      #    (nessuna PrismMasterAssignment da aspettare, a differenza di
+      #    workflow-master: function-installer riconcilia ogni
+      #    PrismFunctionDeployment che vede, sempre). L'immagine non
+      #    contiene segreti (il kubeconfig verso sfcc e' montato a runtime
+      #    da un Secret) - puo' stare anche su un registry pubblico.
+      git clone --depth 1 https://github.com/EdoardoDd/function_installer_test /function-installer
+      # svn export https://github.com/EdoardoDd/prism_serverless/trunk/function_installer /function-installer
+
+      cd /function-installer
+
+      kubectl apply -f rbac.yaml
+      kubectl apply -f crds/prismfunctiondeployment-crd.yaml
+      kubectl apply -f deployment.yaml
+
+      # 8. Il kubeconfig verso sfcc (Secret sfcc-kubeconfig-bivm-reader,
+      #    namespace prism-system) NON viene generato qui: e' depositato
+      #    da bootstrap-cluster-access.sh, stesso identico meccanismo
+      #    gia' usato per gli edge node (workflow-master-bivm-reader).
+      #    Fino a quel momento il pod parte comunque (volume
+      #    "optional: true" in deployment.yaml) ma resta inattivo sulle
+      #    operazioni verso i siti remoti.
