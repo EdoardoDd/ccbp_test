@@ -159,7 +159,7 @@ write_files:
 
       kubectl apply -f rbac.yaml
       kubectl apply -f crds/prismfunctiondeployment-crd.yaml
-      kubectl apply -f manual-deploy/deployment.yaml
+      kubectl apply -f deployment.yaml
 
       # 8. Il kubeconfig verso sfcc (Secret sfcc-kubeconfig-bivm-reader,
       #    namespace prism-system) NON viene generato qui: e' depositato
