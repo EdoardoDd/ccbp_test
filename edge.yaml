@@ -147,8 +147,8 @@ write_files:
       cd /workflow-master
 
       kubectl apply -f rbac.yaml
-      kubectl apply -f crds/prismroutingpolicy-crd.yaml
-      kubectl apply -f crds/prismmasterassignment-crd.yaml
+      kubectl apply -f crds/prism-routingpolicy-crd.yaml
+      kubectl apply -f crds/prism-masterassignment-crd.yaml
 
       # PRISM_SITE e' gia' stato sostituito da envsubst nel testo di
       # QUESTO script (e' cosi' che arriva anche al node-label piu' sopra),
