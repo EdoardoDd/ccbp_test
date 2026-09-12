@@ -158,7 +158,7 @@ write_files:
       cd /function-installer
 
       kubectl apply -f rbac.yaml
-      kubectl apply -f crds/prismfunctiondeployment-crd.yaml
+      kubectl apply -f crds/prism-functiondeployment-crd.yaml
       kubectl apply -f deployment.yaml
 
       # 8. Il kubeconfig verso sfcc (Secret sfcc-kubeconfig-bivm-reader,
