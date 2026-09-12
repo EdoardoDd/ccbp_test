@@ -155,13 +155,11 @@ write_files:
       #    contiene segreti (il kubeconfig verso sfcc e' montato a runtime
       #    da un Secret) - puo' stare anche su un registry pubblico.
       git clone --depth 1 https://github.com/EdoardoDd/function_installer_test /function-installer
-      # svn export https://github.com/EdoardoDd/prism_serverless/trunk/function_installer /function-installer
-
       cd /function-installer
 
       kubectl apply -f rbac.yaml
       kubectl apply -f crds/prismfunctiondeployment-crd.yaml
-      kubectl apply -f deployment.yaml
+      kubectl apply -f manual-deploy/deployment.yaml
 
       # 8. Il kubeconfig verso sfcc (Secret sfcc-kubeconfig-bivm-reader,
       #    namespace prism-system) NON viene generato qui: e' depositato
@@ -170,3 +168,10 @@ write_files:
       #    Fino a quel momento il pod parte comunque (volume
       #    "optional: true" in deployment.yaml) ma resta inattivo sulle
       #    operazioni verso i siti remoti.
+
+runcmd:
+  # write_files SCRIVE lo script ma non lo esegue - serve questo runcmd
+  # per invocarlo davvero al boot. (Bug nella prima versione di questo
+  # file: mancava, cloud-init si fermava dopo i "packages" e kubectl
+  # restava "not found".)
+  - /usr/local/bin/prism-bootstrap-cloud.sh
