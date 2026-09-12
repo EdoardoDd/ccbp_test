@@ -44,7 +44,7 @@ write_files:
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
- 
+
       cat <<'VALUES' > /tmp/traefik-prism-values.yaml
       additionalArguments:
         - "--providers.kubernetescrd.allowCrossNamespace=true"
@@ -61,7 +61,7 @@ write_files:
           nodePort: 30090
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
- 
+
       # 6. Self-provisioning della credenziale di scrittura remota - il
       #    nodo genera per SE STESSO l'accesso che un master altrove
       #    usera' per scrivere qui, usando l'accesso admin che ha gia'
@@ -107,13 +107,13 @@ write_files:
         name: workflow-master-remote-writer
         apiGroup: rbac.authorization.k8s.io
       RBAC
- 
+
       SELF_IP=$(hostname -I | awk '{print $1}')
       SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
       SERVER="${SERVER/127.0.0.1/${SELF_IP}}"
       CA_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
       TOKEN=$(kubectl -n prism-system create token workflow-master-remote-writer --duration=87600h)
- 
+
       mkdir -p /etc/prism
       cat <<KUBECONFIG > /etc/prism/self-remote-writer-kubeconfig.yaml
       apiVersion: v1
@@ -135,7 +135,7 @@ write_files:
             token: ${TOKEN}
       KUBECONFIG
       chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml
- 
+
       # 7. Workflow Master (PRISM) - pre-provisionato da un'immagine gia'
       #    pubblicata (nessun build al boot), pronto ma INATTIVO finche'
       #    non arriva una PrismMasterAssignment che nomina questo sito.
@@ -145,11 +145,11 @@ write_files:
       git clone --depth 1 https://github.com/EdoardoDd/workflow_master_test /workflow-master
       # svn export https://github.com/EdoardoDd/prism_serverless/trunk/workflow-master /workflow-master
       cd /workflow-master
- 
+
       kubectl apply -f rbac.yaml
       kubectl apply -f crds/prismroutingpolicy-crd.yaml
       kubectl apply -f crds/prismmasterassignment-crd.yaml
- 
+
       # PRISM_SITE e' gia' stato sostituito da envsubst nel testo di
       # QUESTO script (e' cosi' che arriva anche al node-label piu' sopra),
       # ma il file manual-deploy/02-deployment.yaml e' stato scaricato ORA
@@ -159,3 +159,10 @@ write_files:
       # Deployment (nessuna copia duplicata qui dentro).
       export PRISM_SITE="${PRISM_SITE}"
       envsubst < deployment.yaml | kubectl apply -f -
+
+runcmd:
+  # write_files SCRIVE lo script ma non lo esegue - serve questo runcmd
+  # per invocarlo davvero al boot. MANCAVA (bug preesistente, non
+  # introdotto in questa chat): e' per questo che ne' cloud-node ne'
+  # edge-node-1 avevano kubectl disponibile dopo il provisioning.
+  - /usr/local/bin/prism-bootstrap-edge.sh
