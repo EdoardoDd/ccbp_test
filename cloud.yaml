@@ -22,8 +22,14 @@ write_files:
       #    serving degli edge-node, stesso trattamento, nessun caso
       #    speciale (coerente col resto del design: function-installer
       #    considera gia' ogni sito "remoto" allo stesso modo).
+      # --write-kubeconfig-mode 644: senza, /etc/rancher/k3s/k3s.yaml resta
+      # leggibile solo da root e un fetch via SSH (es. getKubeconfigUtils)
+      # come utente non privilegiato fallisce con "Permission denied".
+      # Nota: rende il kubeconfig admin leggibile da chiunque abbia un
+      # account sulla VM - accettabile qui perche' sono VM a uso singolo,
+      # ma da tenere a mente.
       curl -sfL https://get.k3s.io | \
-        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=cloud" \
+        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=cloud --write-kubeconfig-mode 644" \
         sh -s -
 
       # 2. Helm
