@@ -114,9 +114,6 @@ write_files:
         - apiGroups: ["discovery.k8s.io"]
           resources: ["endpointslices"]
           verbs: ["get", "list", "watch", "create", "update", "patch"]
-        - apiGroups: ["serving.knative.dev"]
-          resources: ["services"]
-          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       ---
       apiVersion: rbac.authorization.k8s.io/v1
       kind: RoleBinding
@@ -131,7 +128,43 @@ write_files:
         kind: Role
         name: workflow-master-remote-writer
         apiGroup: rbac.authorization.k8s.io
-      RBAC
+      ---
+      # Le Knative Service vivono in FUNCTION_NAMESPACE ("default"), un
+      # namespace DIVERSO da dove vive il ServiceAccount (prism-system).
+      # Un Role/RoleBinding e' scoped al proprio namespace: la regola
+      # serving.knative.dev messa nel Role di prism-system (versione
+      # precedente di questo file) non aveva quindi MAI avuto effetto su
+      # "default" - bug scoperto solo testando una create reale (il
+      # client Node appiattiva il 403 in un generico "HTTP request
+      # failed", nascondendo il vero motivo). Serve un secondo
+      # Role+RoleBinding dedicato, nel namespace "default", che leghi lo
+      # STESSO ServiceAccount (un RoleBinding puo' referenziare un
+      # ServiceAccount di un namespace diverso dal proprio).
+      cat <<'RBAC_KNATIVE' | kubectl apply -f -
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: workflow-master-remote-writer-knative
+        namespace: default
+      rules:
+        - apiGroups: ["serving.knative.dev"]
+          resources: ["services"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: workflow-master-remote-writer-knative
+        namespace: default
+      subjects:
+        - kind: ServiceAccount
+          name: workflow-master-remote-writer
+          namespace: prism-system
+      roleRef:
+        kind: Role
+        name: workflow-master-remote-writer-knative
+        apiGroup: rbac.authorization.k8s.io
+      RBAC_KNATIVE
 
       SELF_IP=$(hostname -I | awk '{print $1}')
       SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
