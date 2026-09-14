@@ -28,8 +28,16 @@ write_files:
       # Nota: rende il kubeconfig admin leggibile da chiunque abbia un
       # account sulla VM - accettabile qui perche' sono VM a uso singolo,
       # ma da tenere a mente.
+      # --disable servicelb: il ServiceLB integrato di k3s assegnerebbe un
+      # nodePort CASUALE (range 30000-32767) al Service "kourier" (tipo
+      # LoadBalancer, creato dal manifest di Kourier) - Service che qui non
+      # usiamo mai (Traefik instrada sempre a "kourier-internal:80",
+      # ClusterIP). Senza disabilitarlo, quel nodePort casuale puo' entrare
+      # in conflitto con i nodePort fissi 30080/30443/30090 di Traefik,
+      # facendo fallire "helm upgrade --install traefik-prism" in modo
+      # intermittente (visto su edge-node-3: nodePort 30090 gia' allocato).
       curl -sfL https://get.k3s.io | \
-        INSTALL_K3S_EXEC="--disable traefik --node-label node-role=cloud --write-kubeconfig-mode 644" \
+        INSTALL_K3S_EXEC="--disable traefik --disable servicelb --node-label node-role=cloud --write-kubeconfig-mode 644" \
         sh -s -
 
       # 2. Helm
