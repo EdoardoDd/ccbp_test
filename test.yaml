@@ -1,0 +1,9 @@
+#cloud-config
+package_update: true
+packages:
+  - git
+
+runcmd:
+  - echo "Inizio test di installazione per il nodo ${PRISM_SITE}" > /tmp/install_test.log
+  - git clone --depth 1 https://${GIT_TOKEN}@github.com/EdoardoDd/function_installer_test.git /function-installer
+  - if [ -d "/function-installer" ]; then echo "Clone completato con successo!" >> /tmp/install_test.log; else echo "Errore nel clone" >> /tmp/install_test.log; fi
