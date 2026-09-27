@@ -15,43 +15,30 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # 1. k3s come control plane INDIPENDENTE (cluster separato dal cloud)
-      # --write-kubeconfig-mode 644: senza, /etc/rancher/k3s/k3s.yaml resta
-      # leggibile solo da root e un fetch via SSH (es. getKubeconfigUtils)
-      # come utente non privilegiato fallisce con "Permission denied".
-      # --disable servicelb: il ServiceLB integrato di k3s assegnerebbe un
-      # nodePort CASUALE (range 30000-32767) al Service "kourier" (tipo
-      # LoadBalancer, creato dal manifest di Kourier) - Service che qui non
-      # usiamo mai (Traefik instrada sempre a "kourier-internal:80",
-      # ClusterIP). Senza disabilitarlo, quel nodePort casuale puo' entrare
-      # in conflitto con i nodePort fissi 30080/30443/30090 di Traefik,
-      # facendo fallire "helm upgrade --install traefik-prism" in modo
-      # intermittente (visto su edge-node-3: nodePort 30090 gia' allocato).
       curl -sfL https://get.k3s.io | \
         INSTALL_K3S_EXEC="--disable traefik --disable servicelb --node-label node-role=edge --node-label prism/site=${PRISM_SITE} --write-kubeconfig-mode 644" \
         sh -s -
 
-      # 2. Helm
+      # helm
       curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-      # export UNA SOLA VOLTA, valido per tutto il resto dello script
       export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-      # 3. Knative Serving + Kourier
+      # knative Serving + kourier
       kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.15.0/serving-crds.yaml
       kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.15.0/serving-core.yaml
       kubectl apply -f https://github.com/knative/net-kourier/releases/download/knative-v1.15.0/kourier.yaml
       kubectl patch configmap/config-network -n knative-serving --type merge \
         -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
 
-      # 4. Prometheus
+      # prometheus
       helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
       helm repo update
       kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n monitoring --set grafana.adminPassword=prism-admin
 
-      # 5. Traefik (Ingress/Routing Service): client-facing + interno
+      # traefik (Ingress/Routing Service)
       helm repo add traefik https://traefik.github.io/charts
       helm repo update
       kubectl create namespace prism-system --dry-run=client -o yaml | kubectl apply -f -
@@ -73,11 +60,7 @@ write_files:
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
 
-      # 6. Self-provisioning della credenziale di scrittura remota - il
-      #    nodo genera per SE STESSO l'accesso che un master altrove
-      #    usera' per scrivere qui, usando l'accesso admin che ha gia'
-      #    su se stesso in questo momento del boot. Nessun kubeconfig
-      #    admin lascia mai il nodo.
+      # provisioning della credenziale di scrittura remota
       cat <<'RBAC' | kubectl apply -f -
       apiVersion: v1
       kind: ServiceAccount
@@ -116,17 +99,7 @@ write_files:
         apiGroup: rbac.authorization.k8s.io
       RBAC
 
-      # Le Knative Service vivono in FUNCTION_NAMESPACE ("default"), un
-      # namespace DIVERSO da dove vive il ServiceAccount (prism-system).
-      # Un Role/RoleBinding e' scoped al proprio namespace: la regola
-      # serving.knative.dev messa nel Role di prism-system (versione
-      # precedente di questo file) non aveva quindi MAI avuto effetto su
-      # "default" - bug scoperto solo testando una create reale (il
-      # client Node appiattiva il 403 in un generico "HTTP request
-      # failed", nascondendo il vero motivo). Serve un secondo
-      # Role+RoleBinding dedicato, nel namespace "default", che leghi lo
-      # STESSO ServiceAccount (un RoleBinding puo' referenziare un
-      # ServiceAccount di un namespace diverso dal proprio).
+      # knative service
       cat <<'RBAC_KNATIVE' | kubectl apply -f -
       apiVersion: rbac.authorization.k8s.io/v1
       kind: Role
@@ -181,13 +154,8 @@ write_files:
       KUBECONFIG
       chmod 600 /etc/prism/self-remote-writer-kubeconfig.yaml
 
-      # 7. Workflow Master (PRISM) - pre-provisionato da un'immagine gia'
-      #    pubblicata (nessun build al boot), pronto ma INATTIVO finche'
-      #    non arriva una PrismMasterAssignment che nomina questo sito.
-      #    L'immagine non contiene segreti (il kubeconfig verso sfcc e'
-      #    montato a runtime da un Secret) - puo' stare anche su un
-      #    registry pubblico senza problemi.
-      git clone --depth 1 https://github.com/EdoardoDd/workflow_master_test /workflow-master
+      # workflow master 
+      git clone --depth 1 https://${GIT_TOKEN}@github.com/EdoardoDd/workflow_master_test /workflow-master
       # svn export https://github.com/EdoardoDd/prism_serverless/trunk/workflow-master /workflow-master
       cd /workflow-master
 
@@ -195,19 +163,9 @@ write_files:
       kubectl apply -f crds/prism-routingpolicy-crd.yaml
       kubectl apply -f crds/prism-masterassignment-crd.yaml
 
-      # PRISM_SITE e' gia' stato sostituito da envsubst nel testo di
-      # QUESTO script (e' cosi' che arriva anche al node-label piu' sopra),
-      # ma il file manual-deploy/02-deployment.yaml e' stato scaricato ORA
-      # dal repo - non e' mai passato dall'envsubst dell'operator. Lo
-      # esportiamo come variabile di shell vera, e usiamo envsubst A
-      # RUNTIME sul file, cosi' resta un'UNICA fonte di verita' per il
-      # Deployment (nessuna copia duplicata qui dentro).
+
       export PRISM_SITE="${PRISM_SITE}"
       envsubst < deployment.yaml | kubectl apply -f -
 
 runcmd:
-  # write_files SCRIVE lo script ma non lo esegue - serve questo runcmd
-  # per invocarlo davvero al boot. MANCAVA (bug preesistente, non
-  # introdotto in questa chat): e' per questo che ne' cloud-node ne'
-  # edge-node-1 avevano kubectl disponibile dopo il provisioning.
   - /usr/local/bin/prism-bootstrap-edge.sh
