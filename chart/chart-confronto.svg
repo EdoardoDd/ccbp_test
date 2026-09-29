@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 300" width="820" height="300" role="img" aria-label="Latenza hello=1 per categoria di destinazione: locale, master, terzo nodo, al crescere del carico" style="font-family:'IBM Plex Sans',Helvetica,Arial,sans-serif">
 <rect width="820" height="300" fill="#fcfcfb"/>
-<text x="52" y="18" fill="#0b0b0b" font-size="13" font-weight="600">Mediana (p50)</text>
+<text x="52" y="18" fill="#0b0b0b" font-size="13" font-weight="600">p50</text>
 <line x1="52" x2="288" y1="254.0" y2="254.0" stroke="#e4e3df" stroke-width="1"/>
 <text x="45" y="258.0" text-anchor="end" fill="#52514e" font-size="11">1</text>
 <line x1="52" x2="288" y1="201.5" y2="201.5" stroke="#e4e3df" stroke-width="1"/>
@@ -57,7 +57,7 @@
 <rect x="297.8" y="106.9" width="8.4" height="8.4" rx="1" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
 <text x="311" y="115.1" fill="#0b0b0b" font-size="11">master</text>
 <path d="M302.0,172.9 L307.2,182.3 L296.8,182.3 Z" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
-<text x="311" y="182.1" fill="#0b0b0b" font-size="11">terzo</text>
+<text x="311" y="182.1" fill="#0b0b0b" font-size="11">terzo nodo</text>
 <text x="462" y="18" fill="#0b0b0b" font-size="13" font-weight="600">p99</text>
 <line x1="462" x2="698" y1="242.6" y2="242.6" stroke="#e4e3df" stroke-width="1"/>
 <text x="455" y="246.6" text-anchor="end" fill="#52514e" font-size="11">3</text>
@@ -118,5 +118,5 @@
 <rect x="707.8" y="108.3" width="8.4" height="8.4" rx="1" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
 <text x="721" y="116.5" fill="#0b0b0b" font-size="11">master</text>
 <path d="M712.0,126.3 L717.2,135.7 L706.8,135.7 Z" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
-<text x="721" y="135.5" fill="#0b0b0b" font-size="11">terzo</text>
+<text x="721" y="135.5" fill="#0b0b0b" font-size="11">terzo nodo</text>
 </svg>
