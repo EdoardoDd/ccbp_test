@@ -14,15 +14,20 @@ al crescere della concorrenza.
 - [Metodo di misura](#metodo-di-misura)
 - [Risultati: workflow-helloworld](#risultati-workflow-helloworld)
 - [Risultati: autoscale-go?prime=5000000](#risultati-autoscale-goprime5000000)
+  - [Autoscaling durante sovraccarico](#autoscaling-durante-sovraccarico)
 - [Confronto fra locale, master e terzo nodo (configurazione di default)](#confronto-fra-locale-master-e-terzo-nodo-configurazione-di-default)
 - [Activator nel percorso dati](#activator-nel-percorso-dati)
+  - [Il percorso di una richiesta](#il-percorso-di-una-richiesta)
+  - [CPU per componente](#cpu-per-componente)
+  - [Caso `target-burst-capacity: 0`](#caso-target-burst-capacity-0)
 - [Confronto fra locale, master e terzo nodo (target-burst-capacity: 0)](#confronto-fra-locale-master-e-terzo-nodo-target-burst-capacity-0)
+  - [Confronto fra le due configurazioni](#confronto-fra-le-due-configurazioni)
 - [Cold start](#cold-start)
 
 
 
 ## Risultati in sintesi
-Valori misurati sull'intera partizione (confronto per catergoria locale/master/remoto riportato in seguito):
+Valori misurati sull'intera partizione (confronto per catergoria locale/master/terzo nodo riportato in seguito):
 | Metrica | (`workflow baseline: hello-world`) |
 |---|---:|
 | p50 - mediana | 2-3 ms |
@@ -57,6 +62,7 @@ Inizialmente il carico era generato dal mio pc, collegato ai nodi del testbed vi
 - Per ogni livello di rate R, il generatore (`load-test.sh` mediante vegeta) invia R richieste al secondo per 10 secondi. Per ogni richiesta si misura la latenza end-to-end. Si registra anche il throughput effettivo, per vedere se differisce dal rate richiesto.
 - Avviene anche monitoraggio dei contatori TCP del nodo ricevente, profondità della coda di accettazione di Traefik e numero di pod pronti per sito.
 - **Rilevamento latenza**: la latenza verso il backend per categoria (locale/master/terzo) viene dal campo `Duration` dell'access log JSON di Traefik sul nodo ricevente e identificato mediante `ServiceAddr`. Il tempo di `Duration` copre: rete verso quel nodo, eventuale coda e computazione. Il round-trip completo è invece quello misurato da vegeta e riportato per intero nelle latenze end-to-end delle seguenti sezioni Risultati.
+- **Rilevamento latenza**: la latenza riportata in tutte le tabelle è quella end-to-end misurata da vegeta, dall'invio della richiesta alla ricezione della risposta completa. Comprende quindi rete, proxy, eventuale coda ed esecuzione della funzione.
 
 ## Risultati: `workflow-helloworld`
 Misurazioni su 11 livelli di concorrenza, dati dalla media di 6 ripetizioni.
@@ -113,18 +119,17 @@ Per osservare pod e autoscaler, `prime=5000000` è stato portato in sovraccarico
 | 10-20 | 66-69 | 4-5 | 3-4 | 2   |
 | 20-60 | 4-134 | 6   | 4   | 2-4 |
 
-- Knative scala in base alle richieste concorrenti per pod. In sovraccarico le richieste in volo arrivano a migliaia, l'autoscaler aggiunge pod fino a 14 contemporaneamente.
+- Knative scala in base alle richieste concorrenti per pod. In caso di sovraccarico, l'autoscaler aggiunge pod fino a 14 contemporaneamente.
 
-
-- **Contesa CPU**: Traefik gira sullo stesso nodo dei pod della funzione, in classe QoS `BestEffort`, sotto contesa riceve la quota minima di CPU. I pod della funzione sono invece `Burstable`, grazie alla piccola richiesta di CPU del sidecar di Knative, e hanno quindi la precedenza. Ingress rimasto senza CPU:
+- **Contesa CPU**: Traefik gira sullo stesso nodo dei pod della funzione, in classe QoS `BestEffort`, sotto contesa riceve la quota minima di CPU. I pod della funzione sono invece `Burstable` e hanno quindi la precedenza. Ingress rimasto senza CPU:
   - le probe di readiness e liveness di Traefik (`/ping`) sono fallite per timeout durante il test
   - la coda di accettazione TCP non si è mai riempita (contatori di overflow a zero), il limite è nella capacità di Traefik di elaborare le connessioni
 
 - **Contesa della memoria**: anche se il calcolo è CPU-bound, ogni richiesta alloca memoria temporanea (nell'ordine di 10-15 MB con `prime=5000000`), liberata solo a fine richiesta. Senza limite di concorrenza (`containerConcurrency: 0`) tutte le richieste in coda entrano nel container e, con la CPU contesa, restano aperte più a lungo, aumentando anche l'occupazione della memoria. Su `edge-node-1` il kernel ha terminato per esaurimento di memoria il processo della funzione, arrivato a circa 4.9 GB degli 8 GB del nodo (il resto era usato da k3s, dallo stack di monitoraggio e dagli altri componenti).
 
-- **Perché l'autoscaler continua ad aggiungere pod**. Knative non guarda la CPU ma le richieste in corso, che valgono circa rate × latenza. Se la latenza sale, le richieste in corso crescono anche a rate costante e l'autoscaler le interpreta come più domanda. Su un nodo singolo si crea un circolo vizioso.
-  - il modello di Knative presuppone un cluster multi-nodo, dove un nuovo pod trova CPU libera su un'altra macchina: nei siti PRISM (k3s a nodo singolo) questa ipotesi non vale
-
+- Knative non guarda la CPU ma le richieste in corso, che valgono rate × latenza. Se la latenza sale, le richieste in corso crescono anche a rate costante e l'autoscaler le interpreta come più domanda. Su un nodo singolo si crea un circolo vizioso: **l'avvio dei nuovi pod consuma CPU sugli stessi core, la latenza sale ancora e l'autoscaler aggiunge altri pod**.
+  - il modello di Knative presuppone un cluster multi-nodo, dove un nuovo pod trova CPU libera su un'altra macchina: nel contesto di test (k3s a nodo singolo) questa ipotesi non vale
+ 
 _Possibili sviluppi futuri da valutare: un tetto al numero di pod per funzione (`max-scale`), richieste e limiti di CPU e memoria per i pod delle funzioni, QoS `Guaranteed` o priorità più alta per Traefik, un limite di concorrenza per container, oppure un ingresso non condiviso con i pod di calcolo._
  
 
@@ -169,7 +174,7 @@ Latenza in ms:
 | 250  | **3.6**    | +0.9    | +0.4    |
 | 500  | **3.6**    | +1.1    | +0.5    |
 | 1000 | **7.5**    | −2.0    | −3.1    |
-| 1500 | **69.9\*** | −55.8 | −63.2 |
+| 1500 | **69.9** | −55.8 | −63.2 |
 | 2000 | **46.7**   | −9.5    | −35.8   |
 | 2500 | **343.1**  | −286.7  | −303.0  |
 | 3000 | **saturo** | —       | —       |
@@ -192,10 +197,12 @@ Osservando la CPU di `edge-node-2` durante il test locale a 2500 req/s, è emers
 ### Il percorso di una richiesta
 Con la configurazione di default ogni richiesta attraversa quattro proxy prima della funzione:
  
-`Traefik` → `gateway Kourier` (envoy) → `activator` → `queue-proxy` → funzione
+`Traefik` → `gateway Kourier` (envoy) → `activator` → `queue-proxy` (sidecar nel pod della funzione) → funzione
+
+Se la funzione viene eseguita su un altro nodo, si aggiunge il Traefik del nodo remoto.
  
 L'**activator** di Knative ha due compiti:
-- **cold start**: quando la funzione è a zero pod, tiene in attesa le richieste finché il pod non è pronto. Senza activator lo scale-to-zero non può funzionare
+- **cold start**: quando la funzione è a zero pod, tiene in attesa le richieste finché il pod non è pronto
 - **buffer sotto carico**: con i pod attivi può restare nel percorso per assorbire i picchi. Con `target-burst-capacity` di default (200) e poche repliche, Knative lo tiene **sempre** nel percorso (servizio in modalità `Proxy`)
 
 ### CPU per componente
@@ -209,15 +216,19 @@ Istantanea di `top` su `edge-node-2` a 2500 req/s, configurazione di default. No
 | queue-proxy | 57% |
 | containerd | ~40% |
 | **Funzione** | **21%** |
+
 (un core rappresenta un 100%)
  
 - I **proxy consumano circa 3 core su 4**, la funzione un quinto di core
-- Durante il test gli **HPA** di Knative hanno aggiunto una replica dell'activator e due del gateway Kourier **sullo stesso nodo** già saturo: più processi e più overhead, non più capacità. Le repliche vengono rimosse qualche minuto dopo il test, quindi ripetizioni successive partono da condizioni diverse
+- Activator e gateway Kourier hanno un HPA che aggiunge repliche quando la CPU sale. Durante il test ha creato una replica in più dell'activator e due del gateway (i processi multipli della tabella):
+  - le repliche finiscono sullo stesso nodo, già al 94% di CPU, e si dividono gli stessi 4 core aggiungendo solo overhead. Non portando nessun guadagno
+
 
 ### Caso `target-burst-capacity: 0`
 Con `autoscaling.knative.dev/target-burst-capacity: "0"` l'activator interviene **solo durante il cold start**. Con il pod attivo il servizio passa in modalità `Serve` e il traffico va diretto al `queue-proxy`.
 - Lo **scale-to-zero resta attivo** (non è stato usato `min-scale: 1`, che lo avrebbe disattivato)
 - Per **evitare cold start fra una ripetizione e l'altra** (pausa di 70 s, mentre Knative scala a zero dopo ~60-90 s di inattività): `scale-to-zero-pod-retention-period: "5m"`, che mantiene l'ultimo pod attivo per 5 minuti dopo l'ultima richiesta. L'equivalente Knative del keep-alive tₙ del DRL.
+- HPA del gateway Kourier **fissato a una replica**.Su un nodo singolo le repliche aggiuntive non portano capacità e il loro numero cambierebbe fra una ripetizione e l'altra. La replica ha un limite di 1 core, ma il throttling è risultato trascurabile.
 
 
 Stesso test (locale, 2500 req/s, 5 ripetizioni) prima e dopo:
@@ -277,10 +288,13 @@ Latenza in ms:
 
 ### Confronto fra le due configurazioni
  
-p50 / p99 in ms, per destinazione:
+Valore con la configurazione di default (in grassetto) e variazione con `target-burst-capacity: 0` (Δ in ms, negativo = più veloce):
+
+<img src="./chart/chart-default-vs-tbc0.svg" width="900">
+
  
 **p50**:
-| Rate req/s | Locale default | Locale TBC=0 | Master default | Master TBC=0 | Terzo nodo default | Terzo nodo TBC=0 |
+| Rate req/s | Locale default | Δ Locale TBC=0 | Master default | Δ Master TBC=0 | Terzo nodo default | Δ Terzo nodo TBC=0 |
 |---:|---:|---:|---:|---:|---:|---:|
 | 250  | **2.3**    | −0.2  | **3.1**  | +0.1  | **2.7** | −0.2 |
 | 500  | **2.0**    | −0.4  | **2.6**  | −0.1  | **2.3** | −0.3 |
@@ -291,7 +305,7 @@ p50 / p99 in ms, per destinazione:
 | 3000 | **saturo** |  (7.5 ms)     | **18.3** | −15.5 | **4.5** | −2.4 |
 
 **p99**:
-| Rate req/s | Locale default | Locale TBC=0 | Master default | Master TBC=0 | Terzo nodo default | Terzo nodo TBC=0 |
+| Rate req/s | Locale default | Δ Locale TBC=0 | Master default | Δ Master TBC=0 | Terzo nodo default | Δ Terzo nodo TBC=0 |
 |---:|---:|---:|---:|---:|---:|---:|
 | 250  | **3.6**    | −0.2   | **4.5**   | +0.4   | **4.0**   | 0.0    |
 | 500  | **3.6**    | 0.0    | **4.7**   | −0.3   | **4.1**   | −0.6   |
@@ -299,13 +313,14 @@ p50 / p99 in ms, per destinazione:
 | 1500 | **69.9**   | −57.4  | **14.1**  | −2.9   | **6.7**   | −1.4   |
 | 2000 | **46.7**   | −24.0  | **37.2**  | −21.5  | **10.9**  | −4.9   |
 | 2500 | **343.1**  | −271.7 | **56.4**  | +0.6   | **40.1**  | −30.8  |
-| 3000 | **saturo** | (119.6 ms) | **265.5** | −167.7 | **135.2** | −104.4 |
+|  3000 | **saturo** | (119.6 ms) | **265.5** | −167.7 | **135.2** | −104.4 |
 
- 
-**Sotto carico** il miglioramento è netto su tutte le destinazioni: il **locale non satura più a 3000 req/s** (prima 2600-2900 req/s di throughput massimo), il p99 del terzo nodo a 3000 req/s passa da 135 a 31 ms
+_A 3000 req/s il locale era saturo con la configurazione di default: tra parentesi il valore assoluto con `target-burst-capacity: 0`._
 
-Su un nodo edge da 4 core con una funzione leggera, l'activator a regime sposta il punto di saturazione di diverse centinaia di richieste al secondo.
+- **A basso carico** locale e terzo nodo guadagnano 0.2-0.4 ms, il costo di un proxy in meno. Il **master non migliora** (Δ fra −0.2 e +0.1 ms), pur con l'activator fuori dal percorso (verificato: servizio in modalità `Serve` anche su `edge-node-1`): il guadagno è probabilmente coperto dal costo aggiuntivo del nodo master, lo stesso che lo rende più lento del terzo nodo a ogni livello
+- **Sotto carico** il miglioramento è netto su tutte le destinazioni: il **locale non satura più a 3000 req/s** (prima 2600-2900 req/s di throughput massimo), il p99 del terzo nodo a 3000 req/s passa da 135 a 31 ms
 
+Su un nodo edge da 4 core con una funzione leggera, l'activator a regime sposta il punto di saturazione oltre i 3000 req/s.
 
 
 
@@ -338,4 +353,5 @@ La prima richiesta dopo un periodo di inattività paga lo scale-to-zero di Knati
 |---|---:|---:|
 | `workflow-helloworld` | 0.6-2.1 s | 2-3 ms |
 | `workflow-autoscale` | 0.8-1.7 s | 40-45 ms |
+
 - Il percorso del cold start passa sempre dall'activator, anche con `target-burst-capacity: 0`: i valori valgono per entrambe le configurazioni
