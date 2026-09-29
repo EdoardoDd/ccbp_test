@@ -1,0 +1,93 @@
+<svg viewBox="0 0 380 270" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Latenza workload: hello-world">
+<style>
+  .bg{fill:#ffffff}
+  .ct{font:600 12px system-ui,sans-serif;fill:#1B2124}
+  .tk{font:10px ui-monospace,monospace;fill:#58646B}
+  .zl{font:10px system-ui,sans-serif;fill:#58646B}
+  .lg{font:11px system-ui,sans-serif;fill:#1B2124}
+  .grid{stroke:#D8DEE0;stroke-width:1}
+  .axis{stroke:#58646B;stroke-width:1}
+  .zone{fill:#EEF0EF}
+  .s50{fill:none;stroke:#1F5F99;stroke-width:2.2}
+  .s90{fill:none;stroke:#388E3C;stroke-width:2.2}
+  .s99{fill:none;stroke:#C77A1E;stroke-width:2.2}
+  .s50d{fill:#1F5F99}
+  .s90d{fill:#388E3C}
+  .s99d{fill:#C77A1E}
+</style>
+<rect class="bg" x="0" y="0" width="380" height="270"/>
+<text class="ct" x="46" y="16">Latenza workload: hello-world</text>
+<line class="grid" x1="46" x2="366" y1="210.0" y2="210.0"/>
+<text class="tk" x="40" y="213.5" text-anchor="end">1</text>
+<line class="grid" x1="46" x2="366" y1="175.3" y2="175.3"/>
+<text class="tk" x="40" y="178.8" text-anchor="end">3</text>
+<line class="grid" x1="46" x2="366" y1="137.3" y2="137.3"/>
+<text class="tk" x="40" y="140.8" text-anchor="end">10</text>
+<line class="grid" x1="46" x2="366" y1="102.7" y2="102.7"/>
+<text class="tk" x="40" y="106.2" text-anchor="end">30</text>
+<line class="grid" x1="46" x2="366" y1="64.7" y2="64.7"/>
+<text class="tk" x="40" y="68.2" text-anchor="end">100</text>
+<line class="grid" x1="46" x2="366" y1="30.0" y2="30.0"/>
+<text class="tk" x="40" y="33.5" text-anchor="end">300</text>
+<line class="axis" x1="122.2" x2="122.2" y1="210" y2="214"/>
+<text class="tk" x="122.2" y="226" text-anchor="middle">1000</text>
+<line class="axis" x1="198.4" x2="198.4" y1="210" y2="214"/>
+<text class="tk" x="198.4" y="226" text-anchor="middle">2000</text>
+<line class="axis" x1="274.6" x2="274.6" y1="210" y2="214"/>
+<text class="tk" x="274.6" y="226" text-anchor="middle">3000</text>
+<line class="axis" x1="350.8" x2="350.8" y1="210" y2="214"/>
+<text class="tk" x="350.8" y="226" text-anchor="middle">4000</text>
+<line class="axis" x1="46" x2="366" y1="210" y2="210"/>
+<text class="tk" x="206.0" y="246" text-anchor="middle">req/s</text>
+<text class="tk" x="10" y="120.0" transform="rotate(-90 10 120.0)" text-anchor="middle">ms </text>
+
+<!-- p99 (Arancione) -->
+<polyline class="s99" points="65.1,163.9 84.1,165.4 122.2,161.8 160.3,157.3 198.4,141.3 217.5,116.7 236.5,128.8 255.6,110.7 274.6,113.9 312.7,65.1 350.8,46.9"/>
+<circle class="s99d" cx="65.1" cy="163.9" r="2.6"/>
+<circle class="s99d" cx="84.1" cy="165.4" r="2.6"/>
+<circle class="s99d" cx="122.2" cy="161.8" r="2.6"/>
+<circle class="s99d" cx="160.3" cy="157.3" r="2.6"/>
+<circle class="s99d" cx="198.4" cy="141.3" r="2.6"/>
+<circle class="s99d" cx="217.5" cy="116.7" r="2.6"/>
+<circle class="s99d" cx="236.5" cy="128.8" r="2.6"/>
+<circle class="s99d" cx="255.6" cy="110.7" r="2.6"/>
+<circle class="s99d" cx="274.6" cy="113.9" r="2.6"/>
+<circle class="s99d" cx="312.7" cy="65.1" r="2.6"/>
+<circle class="s99d" cx="350.8" cy="46.9" r="2.6"/>
+
+<!-- p90 (Verde) -->
+<polyline class="s90" points="65.1,169.5 84.1,173.3 122.2,176.4 160.3,177.5 198.4,173.3 217.5,165.4 236.5,163.9 255.6,155.6 274.6,150.0 312.7,125.1 350.8,101.6"/>
+<circle class="s90d" cx="65.1" cy="169.5" r="2.6"/>
+<circle class="s90d" cx="84.1" cy="173.3" r="2.6"/>
+<circle class="s90d" cx="122.2" cy="176.4" r="2.6"/>
+<circle class="s90d" cx="160.3" cy="177.5" r="2.6"/>
+<circle class="s90d" cx="198.4" cy="173.3" r="2.6"/>
+<circle class="s90d" cx="217.5" cy="165.4" r="2.6"/>
+<circle class="s90d" cx="236.5" cy="163.9" r="2.6"/>
+<circle class="s90d" cx="255.6" cy="155.6" r="2.6"/>
+<circle class="s90d" cx="274.6" cy="150.0" r="2.6"/>
+<circle class="s90d" cx="312.7" cy="125.1" r="2.6"/>
+<circle class="s90d" cx="350.8" cy="101.6" r="2.6"/>
+
+<!-- p50 (Blu) -->
+<polyline class="s50" points="65.1,175.3 84.1,179.8 122.2,183.7 160.3,186.6 198.4,185.1 217.5,183.7 236.5,183.7 255.6,181.1 274.6,178.6 312.7,169.5 350.8,157.9"/>
+<circle class="s50d" cx="65.1" cy="175.3" r="2.6"/>
+<circle class="s50d" cx="84.1" cy="179.8" r="2.6"/>
+<circle class="s50d" cx="122.2" cy="183.7" r="2.6"/>
+<circle class="s50d" cx="160.3" cy="186.6" r="2.6"/>
+<circle class="s50d" cx="198.4" cy="185.1" r="2.6"/>
+<circle class="s50d" cx="217.5" cy="183.7" r="2.6"/>
+<circle class="s50d" cx="236.5" cy="183.7" r="2.6"/>
+<circle class="s50d" cx="255.6" cy="181.1" r="2.6"/>
+<circle class="s50d" cx="274.6" cy="178.6" r="2.6"/>
+<circle class="s50d" cx="312.7" cy="169.5" r="2.6"/>
+<circle class="s50d" cx="350.8" cy="157.9" r="2.6"/>
+
+<!-- Legenda -->
+<line x1="46" y1="256" x2="66" y2="256" stroke="#1F5F99" stroke-width="2.2"/>
+<text class="lg" x="70" y="259">p50</text>
+<line x1="105" y1="256" x2="125" y2="256" stroke="#388E3C" stroke-width="2.2"/>
+<text class="lg" x="129" y="259">p90</text>
+<line x1="164" y1="256" x2="184" y2="256" stroke="#C77A1E" stroke-width="2.2"/>
+<text class="lg" x="188" y="259">p99</text>
+</svg>
