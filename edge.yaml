@@ -221,9 +221,9 @@ write_files:
       # svn export https://github.com/EdoardoDd/prism_serverless/trunk/workflow-master /workflow-master
       cd /workflow-master
 
-      kubectl apply -f rbac.yaml
-      kubectl apply -f crds/prism-routingpolicy-crd.yaml
-      kubectl apply -f crds/prism-masterassignment-crd.yaml
+      kubectl apply -f manifests/rbac.yaml
+      kubectl apply -f manifests/crds/prism-routingpolicy-crd.yaml
+      kubectl apply -f manifests/crds/prism-masterassignment-crd.yaml
 
 
       export PRISM_SITE="${PRISM_SITE}"
