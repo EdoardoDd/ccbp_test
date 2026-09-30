@@ -1,0 +1,134 @@
+#cloud-config
+# MicroStack - nodo CONTROL (multi-nodo)
+# Installa MicroStack come controller, esporta le credenziali per il FileGetter
+# e avvia un piccolo servizio HTTP che genera on-demand i token di join per i compute.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - apt-transport-https
+  - gnupg
+  - snapd
+  - python3
+
+write_files:
+  # Segreto condiviso con i nodi compute: sostituito dal BiVM hook tramite spec.cloudInitEnvs
+  - path: /etc/microstack-join.env
+    permissions: '0600'
+    content: |
+      JOIN_SECRET=${JOIN_SECRET}
+      JOIN_PORT=8090
+
+  # Servizio che genera un token di join per ogni richiesta autorizzata.
+  # I token di MicroStack sono monouso e scadono, quindi vanno generati al momento.
+  - path: /usr/local/bin/join-token-server.py
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env python3
+      import http.server, os, subprocess, sys
+
+      SECRET = os.environ.get("JOIN_SECRET", "")
+      PORT = int(os.environ.get("JOIN_PORT", "8090"))
+
+      if not SECRET or "${" in SECRET:
+          sys.exit("JOIN_SECRET non configurato (manca in cloudInitEnvs?)")
+
+      class Handler(http.server.BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path != "/join-token" or self.headers.get("X-Join-Secret") != SECRET:
+                  self.send_response(403); self.end_headers(); return
+              out = subprocess.run(["microstack", "add-compute"],
+                                   capture_output=True, text=True)
+              lines = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+              if out.returncode != 0 or not lines:
+                  self.send_response(500); self.end_headers()
+                  self.wfile.write(out.stderr.encode()); return
+              token = lines[-1].encode()   # la connection string e' l'ultima riga dell'output
+              self.send_response(200)
+              self.send_header("Content-Type", "text/plain")
+              self.end_headers()
+              self.wfile.write(token)
+              print(f"token emesso per {self.client_address[0]}", flush=True)
+
+      http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+  - path: /etc/systemd/system/microstack-join-token.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=MicroStack join token server
+      After=network-online.target snap.microstack.init.service
+
+      [Service]
+      EnvironmentFile=/etc/microstack-join.env
+      Environment=PATH=/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      ExecStart=/usr/bin/python3 /usr/local/bin/join-token-server.py
+      Restart=on-failure
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/install-microstack.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      LOG=/var/log/microstack-install.log
+      exec > >(tee -a $LOG) 2>&1
+
+      echo "1 Inizio installazione MicroStack (CONTROL)"
+      echo "Data: $(date)"
+
+      echo "2 Avvio snapd"
+      systemctl enable --now snapd
+      sleep 10
+      echo "snapd status: $(systemctl is-active snapd)"
+
+      echo "2b Mappatura hostname -> IPv4 in /etc/hosts"
+      IP4=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+      HN=$(hostname)
+      sed -i "/[[:space:]]${HN}\$/d" /etc/hosts
+      echo "${IP4} ${HN}" >> /etc/hosts
+      echo "hostname ${HN} -> ${IP4}"
+
+      echo "3 Installazione MicroStack snap"
+      snap install microstack --beta
+
+      echo "4 Inizializzazione MicroStack come control"
+      microstack init --auto --control
+      RC=$?
+      echo "microstack init exit code: $RC"
+      if [ $RC -ne 0 ]; then
+        echo "init fallito, il join token server non viene avviato"
+        exit 1
+      fi
+
+      echo "5 Avvio join token server (i compute possono unirsi da ora)"
+      systemctl daemon-reload
+      systemctl enable --now microstack-join-token.service
+
+      echo "6 Export credenziali MicroStack"
+      source /var/snap/microstack/common/etc/microstack.rc
+
+      cat > /tmp/microstack-credentials.json << EOF
+      {
+        "auth_url": "${OS_AUTH_URL}",
+        "user_name": "${OS_USERNAME}",
+        "password": "${OS_PASSWORD}",
+        "tenant_name": "${OS_PROJECT_NAME}",
+        "domain_name": "${OS_USER_DOMAIN_NAME}",
+        "region": "microstack",
+        "insecure": "true"
+      }
+      EOF
+
+      chmod 600 /tmp/microstack-credentials.json
+      echo "Credenziali salvate in /tmp/microstack-credentials.json"
+
+runcmd:
+  - [ bash, -c, "/usr/local/bin/install-microstack.sh" ]
+
+final_message: "Installazione control completata"
