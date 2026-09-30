@@ -134,60 +134,6 @@ write_files:
         apiGroup: rbac.authorization.k8s.io
       RBAC_KNATIVE
 
-      # accesso in lettura ai Prometheus della partizione (endpoint /summary),
-      # e permesso per il Cloud Controller di leggere /summary tramite proxy.
-      # Due Role additive, ciascuna nel proprio namespace: un Role non e' mai
-      # cross-namespace, e qui NON tocchiamo le Role gia' applicate sopra.
-      cat <<'RBAC_SUMMARY' | kubectl apply -f -
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: Role
-      metadata:
-        name: workflow-master-prometheus-reader
-        namespace: monitoring
-      rules:
-        - apiGroups: [""]
-          resources: ["services/proxy"]
-          verbs: ["get"]
-      ---
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: workflow-master-prometheus-reader
-        namespace: monitoring
-      subjects:
-        - kind: ServiceAccount
-          name: workflow-master-remote-writer
-          namespace: prism-system
-      roleRef:
-        kind: Role
-        name: workflow-master-prometheus-reader
-        apiGroup: rbac.authorization.k8s.io
-      ---
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: Role
-      metadata:
-        name: workflow-master-summary-proxy
-        namespace: prism-system
-      rules:
-        - apiGroups: [""]
-          resources: ["services/proxy"]
-          verbs: ["get"]
-      ---
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: workflow-master-summary-proxy
-        namespace: prism-system
-      subjects:
-        - kind: ServiceAccount
-          name: workflow-master-remote-writer
-          namespace: prism-system
-      roleRef:
-        kind: Role
-        name: workflow-master-summary-proxy
-        apiGroup: rbac.authorization.k8s.io
-      RBAC_SUMMARY
-
       SELF_IP=$(hostname -I | awk '{print $1}')
       SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
       SERVER="${SERVER/127.0.0.1/${SELF_IP}}"
@@ -222,13 +168,15 @@ write_files:
       cd /workflow-master
 
       kubectl apply -f manifests/rbac.yaml
+      kubectl apply -f manifests/podmonitor-queue-proxy.yaml
+      kubectl apply -f manifests/rbac-summary-proxy.yaml
       kubectl apply -f manifests/crds/prism-routingpolicy-crd.yaml
       kubectl apply -f manifests/crds/prism-masterassignment-crd.yaml
 
 
       export PRISM_SITE="${PRISM_SITE}"
-      envsubst < deployment.yaml | kubectl apply -f -
-      kubectl apply -f service-workflow-master.yaml
+      envsubst < manifests/deployment.yaml | kubectl apply -f -
+      kubectl apply -f manifests/service-workflow-master.yaml
 
 runcmd:
   - /usr/local/bin/prism-bootstrap-edge.sh
