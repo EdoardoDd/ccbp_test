@@ -58,8 +58,41 @@ write_files:
             default: true
           exposedPort: 8090
           nodePort: 30090
+      metrics:
+        prometheus:
+          serviceMonitor:
+            enabled: true
+            additionalLabels:
+              release: kube-prometheus-stack
+          addRoutersLabels: true
+          addServicesLabels: true
       VALUES
       helm upgrade --install traefik-prism traefik/traefik -n prism-system -f /tmp/traefik-prism-values.yaml
+
+      # metriche del queue-proxy di Knative (richieste servite e latenze per funzione),
+      # lette dal Cloud Controller per il sito cloud-node. Inline perche' cloud-node
+      # non clona il repo di workflow-master; tenere allineato a podmonitor-queue-proxy.yaml.
+      cat <<'PODMONITOR' | kubectl apply -f -
+      apiVersion: monitoring.coreos.com/v1
+      kind: PodMonitor
+      metadata:
+        name: knative-queue-proxy
+        namespace: monitoring
+        labels:
+          release: kube-prometheus-stack
+      spec:
+        namespaceSelector:
+          matchNames:
+            - default
+        selector:
+          matchExpressions:
+            - key: serving.knative.dev/revision
+              operator: Exists
+        podMetricsEndpoints:
+          - port: http-usermetric
+            path: /metrics
+            interval: 15s
+      PODMONITOR
 
       # provisioning della credenziale di scrittura remota 
       cat <<'RBAC' | kubectl apply -f -
@@ -98,7 +131,9 @@ write_files:
         kind: Role
         name: workflow-master-remote-writer
         apiGroup: rbac.authorization.k8s.io
-      ---
+      RBAC
+
+      # knative service
       cat <<'RBAC_KNATIVE' | kubectl apply -f -
       apiVersion: rbac.authorization.k8s.io/v1
       kind: Role
