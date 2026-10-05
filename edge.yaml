@@ -170,6 +170,7 @@ write_files:
       kubectl apply -f manifests/rbac.yaml
       kubectl apply -f manifests/podmonitor-queue-proxy.yaml
       kubectl apply -f manifests/rbac-summary-proxy.yaml
+      kubectl apply -f manifests/rbac-cleanup.yaml
       kubectl apply -f manifests/crds/prism-routingpolicy-crd.yaml
       kubectl apply -f manifests/crds/prism-masterassignment-crd.yaml
 
