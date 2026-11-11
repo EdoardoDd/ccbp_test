@@ -36,7 +36,10 @@ write_files:
       helm repo update
       kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
       helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-        -n monitoring --set grafana.adminPassword=prism-admin
+        -n monitoring --set grafana.adminPassword=prism-admin \
+        --set kubelet.serviceMonitor.interval=10s \
+        --set prometheus-node-exporter.prometheus.monitor.interval=10s \
+        --set kube-state-metrics.prometheus.monitor.interval=10s
 
       # traefik (Ingress/Routing Service)
       helm repo add traefik https://traefik.github.io/charts
